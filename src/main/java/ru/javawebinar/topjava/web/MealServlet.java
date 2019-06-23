@@ -2,10 +2,17 @@ package ru.javawebinar.topjava.web;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.context.support.ClassPathXmlApplicationContext;
 import ru.javawebinar.topjava.model.Meal;
+import ru.javawebinar.topjava.model.Role;
+import ru.javawebinar.topjava.model.User;
 import ru.javawebinar.topjava.repository.MealRepository;
 import ru.javawebinar.topjava.repository.inmemory.InMemoryMealRepositoryImpl;
+import ru.javawebinar.topjava.to.MealTo;
 import ru.javawebinar.topjava.util.MealsUtil;
+import ru.javawebinar.topjava.web.meal.MealRestController;
+import ru.javawebinar.topjava.web.user.AdminRestController;
 
 import javax.servlet.ServletConfig;
 import javax.servlet.ServletException;
@@ -15,17 +22,24 @@ import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
+import java.util.Arrays;
 import java.util.Objects;
+
+import static ru.javawebinar.topjava.web.SecurityUtil.authUserId;
 
 public class MealServlet extends HttpServlet {
     private static final Logger log = LoggerFactory.getLogger(MealServlet.class);
 
-    private MealRepository repository;
+    private MealRestController controller;
 
     @Override
-    public void init(ServletConfig config) throws ServletException {
+    public void init(ServletConfig config) throws ServletException
+    {
         super.init(config);
-        repository = new InMemoryMealRepositoryImpl();
+        try (ConfigurableApplicationContext appCtx = new ClassPathXmlApplicationContext("spring/spring-app.xml")) {
+            System.out.println("Bean definition names: " + Arrays.toString(appCtx.getBeanDefinitionNames()));
+            controller = appCtx.getBean(MealRestController.class);
+        }
     }
 
     @Override
@@ -33,13 +47,13 @@ public class MealServlet extends HttpServlet {
         request.setCharacterEncoding("UTF-8");
         String id = request.getParameter("id");
 
-        Meal meal = new Meal(id.isEmpty() ? null : Integer.valueOf(id),
+        Meal meal = new Meal(id.isEmpty() ? null : Integer.valueOf(id), authUserId(),
                 LocalDateTime.parse(request.getParameter("dateTime")),
                 request.getParameter("description"),
                 Integer.parseInt(request.getParameter("calories")));
 
         log.info(meal.isNew() ? "Create {}" : "Update {}", meal);
-        repository.save(meal);
+        controller.create(meal);
         response.sendRedirect("meals");
     }
 
@@ -49,16 +63,15 @@ public class MealServlet extends HttpServlet {
 
         switch (action == null ? "all" : action) {
             case "delete":
-                int id = getId(request);
-                log.info("Delete {}", id);
-                repository.delete(id);
+                log.info("Delete {}", getId(request));
+                controller.delete(getId(request));
                 response.sendRedirect("meals");
                 break;
             case "create":
             case "update":
-                final Meal meal = "create".equals(action) ?
-                        new Meal(LocalDateTime.now().truncatedTo(ChronoUnit.MINUTES), "", 1000) :
-                        repository.get(getId(request));
+                final MealTo meal = "create".equals(action) ?
+                        controller.create(new Meal(authUserId(), LocalDateTime.now().truncatedTo(ChronoUnit.MINUTES), "", 1000)) :
+                        controller.update(getId(request));
                 request.setAttribute("meal", meal);
                 request.getRequestDispatcher("/mealForm.jsp").forward(request, response);
                 break;
@@ -66,7 +79,7 @@ public class MealServlet extends HttpServlet {
             default:
                 log.info("getAll");
                 request.setAttribute("meals",
-                        MealsUtil.getWithExcess(repository.getAll(), MealsUtil.DEFAULT_CALORIES_PER_DAY));
+                        MealsUtil.getWithExcess(controller.getAll(), MealsUtil.DEFAULT_CALORIES_PER_DAY));
                 request.getRequestDispatcher("/meals.jsp").forward(request, response);
                 break;
         }
